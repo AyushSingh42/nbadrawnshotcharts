@@ -10,6 +10,9 @@ def load_data():
 
 df = load_data()
 
+df['GAME_DATE'] = pd.to_datetime(df['GAME_DATE'], format='%Y%m%d')
+df['GAME_DATE_STR'] = df['GAME_DATE'].dt.strftime('%m/%d/%Y')
+
 def draw_plotly_court(fig, fig_width=600, margins=10):
     def ellipse_arc(x_center=0.0, y_center=0.0, a=10.5, b=10.5, start_angle=0.0, end_angle=2 * np.pi, N=200, closed=False):
         t = np.linspace(start_angle, end_angle, N)
@@ -125,7 +128,38 @@ selected_player = st.selectbox("Select a player", players)
 # Filter shots for selected player
 player_shots = df[df['PLAYER_NAME'] == selected_player]
 
+# Create figure and draw court
 fig = go.Figure()
 draw_plotly_court(fig)
+
+# Add shots as scatter points
+fig.add_trace(go.Scatter(
+    x=player_shots['LOC_X'],
+    y=player_shots['LOC_Y'],
+    mode='markers',
+    marker=dict(
+        color=np.where(player_shots['SHOT_MADE_FLAG'] == 1, 'green', 'red'),
+        size=6,
+        opacity=0.7
+    ),
+    name='',
+    hovertemplate=(
+        "Distance: %{customdata[0]:} ft<br>" +
+        "Period: %{customdata[2]}<br>" +
+        "Time Left: %{customdata[3]}m %{customdata[4]}s<br>" +
+        "%{customdata[5]} vs %{customdata[6]} on %{customdata[1]}"  # Teams and formatted date
+    ),
+    customdata=np.stack([
+        player_shots['SHOT_DISTANCE'],         # 0
+        player_shots['GAME_DATE_STR'],         # 1 (formatted date)
+        player_shots['PERIOD'],                # 2
+        player_shots['MINUTES_REMAINING'],    # 3
+        player_shots['SECONDS_REMAINING'],    # 4
+        player_shots['HTM'],                   # 5 (home team)
+        player_shots['VTM'],                   # 6 (visitor team)
+    ], axis=-1)
+))
+
+fig.update_layout(showlegend=False)
 
 st.plotly_chart(fig, use_container_width=True)
