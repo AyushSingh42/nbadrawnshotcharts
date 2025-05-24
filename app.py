@@ -137,6 +137,7 @@ app.layout = html.Div([
     value=players[0],  # <- Set default
     placeholder="Select a player"
     ),
+    html.Div(id='player-stats', style={'marginTop': '20px'}),
     html.Div([
         dcc.Graph(id='shot-chart', style={'flex': '2'}),
         html.Img(id='player-headshot', style={'height': '300px', 'marginLeft': '40px'})
@@ -146,6 +147,7 @@ app.layout = html.Div([
 @app.callback(
     Output('shot-chart', 'figure'),
     Output('player-headshot', 'src'),
+    Output('player-stats', 'children'),  # New Output
     Input('player-dropdown', 'value')
 )
 
@@ -196,9 +198,75 @@ def update_chart(player):
         )
     )
 
+    # Calculate stats:
+    total_shots = len(player_data)
+    made_shots = player_data['SHOT_MADE_FLAG'].sum()
+    fg_percent = made_shots / total_shots if total_shots > 0 else 0
+
+    # Three pointers
+    three_pt_shots = player_data[player_data['SHOT_TYPE'].str.contains('3PT')]
+    made_3pt = three_pt_shots['SHOT_MADE_FLAG'].sum()
+    three_pt_percent = made_3pt / len(three_pt_shots) if len(three_pt_shots) > 0 else 0
+
+    # Effective FG%: (FGM + 0.5*3PM) / FGA
+    efg = (made_shots + 0.5 * made_3pt) / total_shots if total_shots > 0 else 0
+
+    stats_text = (
+        f"Field Goal %: {fg_percent:.1%} | "
+        f"3PT %: {three_pt_percent:.1%} | "
+        f"eFG%: {efg:.1%}"
+    )
+
     player_id = player_data['PLAYER_ID'].iloc[0]
     img_url = f"https://cdn.nba.com/headshots/nba/latest/1040x760/{player_id}.png"
-    return fig, img_url
+
+    return fig, img_url, stats_text
+
+def display_selection_stats(selectedData, player):
+    if not selectedData or not player:
+        return "Select an area to see shooting percentages."
+
+    points = selectedData.get('points', [])
+    if len(points) == 0:
+        return "No shots selected."
+
+    # Extract indices of selected points from 'pointIndex' or from x/y coordinates
+    selected_points = []
+    for pt in points:
+        # 'pointIndex' is the index of the point in the trace
+        selected_points.append(pt['pointIndex'])
+
+    # Filter player data again to match the points
+    player_data = df[df['PLAYER_NAME'] == player].reset_index(drop=True)
+    selected_shots = player_data.iloc[selected_points]
+
+    if selected_shots.empty:
+        return "No shots selected."
+
+    total_shots = len(selected_shots)
+    made_shots = selected_shots['SHOT_MADE_FLAG'].sum()
+
+    # Three pointers?
+    three_point_shots = selected_shots[selected_shots['SHOT_TYPE'].str.contains('3PT')]
+    three_point_made = three_point_shots['SHOT_MADE_FLAG'].sum()
+
+    fg_pct = made_shots / total_shots * 100 if total_shots > 0 else 0
+    three_pt_pct = (three_point_made / len(three_point_shots) * 100) if len(three_point_shots) > 0 else None
+
+    # eFG% = (FGM + 0.5 * 3PM) / FGA
+    efg = (made_shots + 0.5 * three_point_made) / total_shots * 100 if total_shots > 0 else 0
+
+    three_pt_text = f"{three_pt_pct:.1f}%" if three_pt_pct is not None else "N/A"
+
+    return html.Div([
+        html.Strong(f"Shots selected: {total_shots}"),
+        html.Br(),
+        f"Field Goal %: {fg_pct:.1f}%",
+        html.Br(),
+        f"3PT %: {three_pt_text}",
+        html.Br(),
+        f"eFG %: {efg:.1f}%",
+    ])
 
 if __name__ == '__main__':
     app.run(debug=False, dev_tools_ui=False, dev_tools_props_check=False)
