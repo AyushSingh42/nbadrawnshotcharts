@@ -1,17 +1,20 @@
-import streamlit as st
-import pandas as pd
+import dash
+from dash import dcc, html, Input, Output, State
 import plotly.graph_objects as go
+import pandas as pd
 import numpy as np
 
-# Load shot data
-@st.cache_data
-def load_data():
-    return pd.read_csv("shots.csv")
-
-df = load_data()
-
+# Load data
+df = pd.read_csv("shots.csv")
 df['GAME_DATE'] = pd.to_datetime(df['GAME_DATE'], format='%Y%m%d')
 df['GAME_DATE_STR'] = df['GAME_DATE'].dt.strftime('%m/%d/%Y')
+
+# Dash app setup
+app = dash.Dash(__name__)
+server = app.server
+
+# Get unique player names
+players = sorted(df['PLAYER_NAME'].dropna().unique())
 
 def draw_plotly_court(fig, fig_width=600, margins=10):
     def ellipse_arc(x_center=0.0, y_center=0.0, a=10.5, b=10.5, start_angle=0.0, end_angle=2 * np.pi, N=200, closed=False):
@@ -32,8 +35,8 @@ def draw_plotly_court(fig, fig_width=600, margins=10):
     fig.update_yaxes(range=[-52.5 - margins, 417.5 + margins])
 
     threept_break_y = 89.47765084
-    three_line_col = "#777777"
-    main_line_col = "#777777"
+    three_line_col = "#000000"
+    main_line_col = "#000000"
 
     fig.update_layout(
         margin=dict(l=20, r=20, t=20, b=20),
@@ -79,16 +82,16 @@ def draw_plotly_court(fig, fig_width=600, margins=10):
 
             dict(
                 type="rect", x0=-2, y0=-7.25, x1=2, y1=-12.5,
-                line=dict(color="#ec7607", width=1),
-                fillcolor='#ec7607',
+                line=dict(color=main_line_col, width=1),
+                fillcolor=main_line_col,
             ),
             dict(
                 type="circle", x0=-7.5, y0=-7.5, x1=7.5, y1=7.5, xref="x", yref="y",
-                line=dict(color="#ec7607", width=1),
+                line=dict(color=main_line_col, width=1),
             ),
             dict(
                 type="line", x0=-30, y0=-12.5, x1=30, y1=-12.5,
-                line=dict(color="#ec7607", width=1),
+                line=dict(color=main_line_col, width=1),
             ),
 
             dict(type="path",
@@ -122,38 +125,41 @@ def draw_plotly_court(fig, fig_width=600, margins=10):
     )
     return True
 
-def calculate_player_stats(df):
-    total_fga = len(df)  # Field Goal Attempts
-    total_fgm = df['SHOT_MADE_FLAG'].sum()  # Field Goals Made
-    
-    # Three-point shots (distance >= 23.75 feet)
-    three_pt_mask = df['SHOT_DISTANCE'] >= 23.75
-    three_pt_attempts = three_pt_mask.sum()
-    three_pt_made = df.loc[three_pt_mask, 'SHOT_MADE_FLAG'].sum()
-    
-    fg_pct = total_fgm / total_fga if total_fga > 0 else np.nan
-    three_pt_pct = three_pt_made / three_pt_attempts if three_pt_attempts > 0 else np.nan
-    
-    # Effective Field Goal Percentage formula: (FGM + 0.5 * 3PM) / FGA
-    efg_pct = (total_fgm + 0.5 * three_pt_made) / total_fga if total_fga > 0 else np.nan
-    
-    return fg_pct, three_pt_pct, efg_pct
+def ordinal(n):
+    return "%d%s" % (n, "tsnrhtdd"[((n//10%10!=1)*(n%10<4)*n%10)::4])
 
-def round_to_tenth_percent(x):
-    return round(x * 100, 1)
 
-players = sorted(df['PLAYER_NAME'].unique())
-selected_player = st.selectbox("Select a player", players)
+app.layout = html.Div([
+    html.H1("NBA Shot Chart"),
+    dcc.Dropdown(
+        id='player-dropdown',
+        options=[{'label': name, 'value': name} for name in players],
+        placeholder="Select a player"
+    ),
+    dcc.Graph(id='shot-chart')
+])
 
-# Filter shots for selected player
-player_shots = df[df['PLAYER_NAME'] == selected_player]
+@app.callback(
+    Output('shot-chart', 'figure'),
+    Input('player-dropdown', 'value')
+)
+def update_chart(player):
+    fig = go.Figure()
+    draw_plotly_court(fig)
+    if player is None:
+        return fig
 
-# Create figure and draw court
-fig = go.Figure()
-draw_plotly_court(fig)
+    player_shots = df[df['PLAYER_NAME'] == player]
+    made = player_shots[player_shots['SHOT_MADE_FLAG'] == 1]
+    missed = player_shots[player_shots['SHOT_MADE_FLAG'] == 0]
 
-# Add shots as scatter points
-fig.add_trace(go.Scatter(
+    # Create a new column in your DataFrame for ordinal quarter string
+    player_shots['PERIOD_ORDINAL'] = player_shots['PERIOD'].apply(ordinal)
+
+    # Create a zero-padded seconds string column
+    player_shots['SECONDS_PADDED'] = player_shots['SECONDS_REMAINING'].apply(lambda x: f"{int(x):02d}")
+
+    fig.add_trace(go.Scatter(
     x=player_shots['LOC_X'],
     y=player_shots['LOC_Y'],
     mode='markers',
@@ -162,41 +168,31 @@ fig.add_trace(go.Scatter(
         size=6,
         opacity=0.7
     ),
-    name='',
-    hovertemplate=(
-        "Distance: %{customdata[0]:} ft<br>" +
-        "Period: %{customdata[2]}<br>" +
-        "Time Left: %{customdata[3]}m %{customdata[4]}s<br>" +
-        "%{customdata[5]} vs %{customdata[6]} on %{customdata[1]}"  # Teams and formatted date
-    ),
     customdata=np.stack([
-        player_shots['SHOT_DISTANCE'],         # 0
-        player_shots['GAME_DATE_STR'],         # 1 (formatted date)
-        player_shots['PERIOD'],                # 2
-        player_shots['MINUTES_REMAINING'],    # 3
-        player_shots['SECONDS_REMAINING'],    # 4
-        player_shots['HTM'],                   # 5 (home team)
-        player_shots['VTM'],                   # 6 (visitor team)
-    ], axis=-1)
-))
+        player_shots['GAME_DATE_STR'],       # 0
+        player_shots['HTM'],                 # 1
+        player_shots['VTM'],                 # 2
+        player_shots['PERIOD_ORDINAL'],     # 3
+        player_shots['MINUTES_REMAINING'],  # 4
+        player_shots['SECONDS_PADDED'],     # 5
+    ], axis=-1),
+    hovertemplate=(
+        "%{customdata[1]} vs %{customdata[2]} on %{customdata[0]}<br>" +
+        "%{customdata[3]} Qtr, %{customdata[4]}:%{customdata[5]} remaining<br>" +
+        "<extra></extra>"
+    )
+    ))
 
-fig.update_layout(showlegend=False)
+    fig.update_layout(
+        hoverlabel=dict(
+            bgcolor="white",  # hover background color
+            font_size=12,
+            font_color="black",
+            font_family="Arial"
+        )
+    )
 
-st.plotly_chart(fig, use_container_width=True)
+    return fig
 
-fg_pct, three_pt_pct, efg_pct = calculate_player_stats(player_shots)
-
-if not np.isnan(fg_pct):
-    st.markdown(f"**Field Goal %:** {round_to_tenth_percent(fg_pct)}%")
-else:
-    st.markdown("**Field Goal %:** No shots taken")
-
-if not np.isnan(three_pt_pct):
-    st.markdown(f"**Three Point %:** {round_to_tenth_percent(three_pt_pct)}%")
-else:
-    st.markdown("**Three Point %:** No 3PT attempts")
-
-if not np.isnan(efg_pct):
-    st.markdown(f"**Effective Field Goal %:** {round_to_tenth_percent(efg_pct)}%")
-else:
-    st.markdown("**Effective Field Goal %:** No shots taken")
+if __name__ == '__main__':
+    app.run(debug=False, dev_tools_ui=False, dev_tools_props_check=False)
