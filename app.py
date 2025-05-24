@@ -132,49 +132,53 @@ def ordinal(n):
 app.layout = html.Div([
     html.H1("NBA Shot Chart"),
     dcc.Dropdown(
-        id='player-dropdown',
-        options=[{'label': name, 'value': name} for name in players],
-        placeholder="Select a player"
+    id='player-dropdown',
+    options=[{'label': name, 'value': name} for name in players],
+    value=players[0],  # <- Set default
+    placeholder="Select a player"
     ),
-    dcc.Graph(id='shot-chart')
+    html.Div([
+        dcc.Graph(id='shot-chart', style={'flex': '2'}),
+        html.Img(id='player-headshot', style={'height': '300px', 'marginLeft': '40px'})
+    ], style={'display': 'flex', 'alignItems': 'center'})
 ])
 
 @app.callback(
     Output('shot-chart', 'figure'),
+    Output('player-headshot', 'src'),
     Input('player-dropdown', 'value')
 )
+
 def update_chart(player):
     fig = go.Figure()
     draw_plotly_court(fig)
+    fig.update_layout(showlegend=False)
+
     if player is None:
-        return fig
+        return fig, ""
 
-    player_shots = df[df['PLAYER_NAME'] == player]
-    made = player_shots[player_shots['SHOT_MADE_FLAG'] == 1]
-    missed = player_shots[player_shots['SHOT_MADE_FLAG'] == 0]
-
-    # Create a new column in your DataFrame for ordinal quarter string
-    player_shots['PERIOD_ORDINAL'] = player_shots['PERIOD'].apply(ordinal)
-
-    # Create a zero-padded seconds string column
-    player_shots['SECONDS_PADDED'] = player_shots['SECONDS_REMAINING'].apply(lambda x: f"{int(x):02d}")
+    player_data = df[df['PLAYER_NAME'] == player]
+    if player_data.empty:
+        return fig, ""
+    
+    period_ordinal = player_data['PERIOD'].apply(ordinal)
+    seconds_padded = player_data['SECONDS_REMAINING'].apply(lambda x: f"{int(x):02d}")
 
     fig.add_trace(go.Scatter(
-    x=player_shots['LOC_X'],
-    y=player_shots['LOC_Y'],
+    x=player_data['LOC_X'],
+    y=player_data['LOC_Y'],
     mode='markers',
     marker=dict(
-        color=np.where(player_shots['SHOT_MADE_FLAG'] == 1, 'green', 'red'),
+        color=np.where(player_data['SHOT_MADE_FLAG'] == 1, 'green', 'red'),
         size=6,
         opacity=0.7
-    ),
-    customdata=np.stack([
-        player_shots['GAME_DATE_STR'],       # 0
-        player_shots['HTM'],                 # 1
-        player_shots['VTM'],                 # 2
-        player_shots['PERIOD_ORDINAL'],     # 3
-        player_shots['MINUTES_REMAINING'],  # 4
-        player_shots['SECONDS_PADDED'],     # 5
+    ), customdata=np.stack([
+        player_data['GAME_DATE_STR'],    # 0
+        player_data['HTM'],              # 1
+        player_data['VTM'],              # 2
+        period_ordinal,                   # 3 (local variable)
+        player_data['MINUTES_REMAINING'],  # 4
+        seconds_padded,                   # 5 (local variable)
     ], axis=-1),
     hovertemplate=(
         "%{customdata[1]} vs %{customdata[2]} on %{customdata[0]}<br>" +
@@ -185,14 +189,16 @@ def update_chart(player):
 
     fig.update_layout(
         hoverlabel=dict(
-            bgcolor="white",  # hover background color
+            bgcolor="white",
             font_size=12,
             font_color="black",
             font_family="Arial"
         )
     )
 
-    return fig
+    player_id = player_data['PLAYER_ID'].iloc[0]
+    img_url = f"https://cdn.nba.com/headshots/nba/latest/1040x760/{player_id}.png"
+    return fig, img_url
 
 if __name__ == '__main__':
     app.run(debug=False, dev_tools_ui=False, dev_tools_props_check=False)
