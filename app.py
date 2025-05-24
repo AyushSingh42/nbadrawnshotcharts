@@ -122,6 +122,26 @@ def draw_plotly_court(fig, fig_width=600, margins=10):
     )
     return True
 
+def calculate_player_stats(df):
+    total_fga = len(df)  # Field Goal Attempts
+    total_fgm = df['SHOT_MADE_FLAG'].sum()  # Field Goals Made
+    
+    # Three-point shots (distance >= 23.75 feet)
+    three_pt_mask = df['SHOT_DISTANCE'] >= 23.75
+    three_pt_attempts = three_pt_mask.sum()
+    three_pt_made = df.loc[three_pt_mask, 'SHOT_MADE_FLAG'].sum()
+    
+    fg_pct = total_fgm / total_fga if total_fga > 0 else np.nan
+    three_pt_pct = three_pt_made / three_pt_attempts if three_pt_attempts > 0 else np.nan
+    
+    # Effective Field Goal Percentage formula: (FGM + 0.5 * 3PM) / FGA
+    efg_pct = (total_fgm + 0.5 * three_pt_made) / total_fga if total_fga > 0 else np.nan
+    
+    return fg_pct, three_pt_pct, efg_pct
+
+def round_to_tenth_percent(x):
+    return round(x * 100, 1)
+
 players = sorted(df['PLAYER_NAME'].unique())
 selected_player = st.selectbox("Select a player", players)
 
@@ -163,3 +183,20 @@ fig.add_trace(go.Scatter(
 fig.update_layout(showlegend=False)
 
 st.plotly_chart(fig, use_container_width=True)
+
+fg_pct, three_pt_pct, efg_pct = calculate_player_stats(player_shots)
+
+if not np.isnan(fg_pct):
+    st.markdown(f"**Field Goal %:** {round_to_tenth_percent(fg_pct)}%")
+else:
+    st.markdown("**Field Goal %:** No shots taken")
+
+if not np.isnan(three_pt_pct):
+    st.markdown(f"**Three Point %:** {round_to_tenth_percent(three_pt_pct)}%")
+else:
+    st.markdown("**Three Point %:** No 3PT attempts")
+
+if not np.isnan(efg_pct):
+    st.markdown(f"**Effective Field Goal %:** {round_to_tenth_percent(efg_pct)}%")
+else:
+    st.markdown("**Effective Field Goal %:** No shots taken")
